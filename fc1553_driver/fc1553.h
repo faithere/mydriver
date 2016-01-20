@@ -17,8 +17,14 @@
 #endif
 
 #define DMA_BD_SW_NUM_WORDS 16
-#define MAX_DMA_ENGINES 16
+#define MAX_DMA_ENGINES 64
 #define MAX_BARS 6
+
+/** Engine bitmask is 64-bit because there are 64 engines */
+#define DMA_ENGINE_PER_SIZE     0x100                                      /*  Separation between engine regs */
+#define DMA_OFFSET              0                                          /*  Starting register offset */
+#define DMA_SIZE                (MAX_DMA_ENGINES * DMA_ENGINE_PER_SIZE)    /*  Size of DMA engine reg space */
+
 typedef u32 Dma_Bd[DMA_BD_SW_NUM_WORDS];
 
 struct pci_bar
@@ -175,5 +181,9 @@ struct PktPool
 #define log_verbose(x...)
 #define log_normal(x...)
 #endif
+
+/*******************DMA CONTROLLER REGISTER******************/
+#define XIo_In32(addr)      (ioread32((unsigned char *)(addr)))
+#define XIo_Out32(addr, data) (iowrite32((data), (unsigned char *)(addr)))
 
 #endif

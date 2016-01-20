@@ -13,6 +13,7 @@
 #include <linux/version.h>
 
 #include "fc1553.h"
+#include "xdma_hw.h"
 
 #define DMA_BD_CNT 3999
 #define MAX_POOL 10
@@ -78,13 +79,13 @@ static ssize_t fc1553_read(struct file *flip, char __user *buff, size_t count, l
   addr+=flip->f_pos;
   if (down_interruptible(&(pcard->sem)))
     return -ERESTARTSYS;
-  /*
-  printk(KERN_INFO "pcard->bar0_start=0x%x\n",pcard->bar0_start);
-  */
+
+//  printk(KERN_INFO "pcard->bar0_start=0x%x,actual read address is 0x%x\n",pcard->bar0_start,(u32)addr);
+
   *(pcard->mem_buf)=ioread32(addr);
-  /*
-  printk(KERN_INFO "read executed! read_val=0x%x\n",temp);
-  */
+
+//  printk(KERN_INFO "read executed! read_val=0x%x\n",temp);
+
   count=sizeof(pcard->mem_buf);
   if (copy_to_user(buff,pcard->mem_buf,count))
     {
@@ -179,6 +180,73 @@ static void fc1553_pci_remove(struct pci_dev *dev)
   */
 }
 
+/*
+ *Get Configuration of DMA Engine
+ */
+static void ReadDMAEngineConfiguration(struct pci_dev * pdev, struct privData * dmaInfo)
+{
+    u32 base, offset;
+    u32 val, type, dirn, num, bc;
+    int i;
+    Dma_Engine * eptr;
+
+    /* DMA registers are in BAR0 */
+    base = (u32)(dmaInfo->barInfo[0].baseVAddr);
+    printk(KERN_INFO "value of base is 0x%x\n",base);
+
+    printk(KERN_INFO "Hardware design version %x\n", XIo_In32(base+0x8000));
+
+    /* Walk through the capability register of all DMA engines */
+    for(offset = DMA_OFFSET, i=0; offset < DMA_SIZE; offset += DMA_ENGINE_PER_SIZE, i++)
+    {
+        log_verbose(KERN_INFO "Reading engine capability from %x\n",(base+offset+REG_DMA_ENG_CAP));
+        val = Dma_mReadReg((base+offset), REG_DMA_ENG_CAP);
+        log_verbose(KERN_INFO "REG_DMA_ENG_CAP returned %x\n", val);
+
+        if(val & DMA_ENG_PRESENT_MASK)
+        {
+            log_verbose(KERN_INFO "Engine capability is %x\n", val);
+            eptr = &(dmaInfo->Dma[i]);
+
+            log_verbose(KERN_INFO "DMA Engine present at offset %x: ", offset);
+
+            dirn = (val & DMA_ENG_DIRECTION_MASK);
+            if(dirn == DMA_ENG_C2S)
+                printk("C2S, ");
+            else
+                printk("S2C, ");
+
+            type = (val & DMA_ENG_TYPE_MASK);
+            if(type == DMA_ENG_BLOCK)
+                printk("Block DMA, ");
+            else if(type == DMA_ENG_PACKET)
+                printk("Packet DMA, ");
+            else
+                printk("Unknown DMA %x, ", type);
+
+            num = (val & DMA_ENG_NUMBER) >> DMA_ENG_NUMBER_SHIFT;
+            printk("Eng. Number %d, ", num);
+
+            bc = (val & DMA_ENG_BD_MAX_BC) >> DMA_ENG_BD_MAX_BC_SHIFT;
+            printk("Max Byte Count 2^%d\n", bc);
+
+            if(type != DMA_ENG_PACKET) {
+                log_normal(KERN_ERR "This driver is capable of only Packet DMA\n");
+                continue;
+            }
+
+            /* Initialise this engine's data structure. This will also
+             * reset the DMA engine.
+             */
+	    //temp del  Dma_Initialize(eptr, (base + offset), dirn);
+            eptr->pdev = pdev;
+
+            dmaInfo->engineMask |= (1LL << i);
+        }
+    }
+    log_verbose(KERN_INFO "Engine mask is 0x%llx\n", dmaInfo->engineMask);
+}
+
 /***************************************probe fucntion*********************************************/
 static int fc1553_pci_probe(struct pci_dev *pdev,const struct pci_device_id *id)
 {
@@ -219,11 +287,13 @@ static int fc1553_pci_probe(struct pci_dev *pdev,const struct pci_device_id *id)
     }
   pktPoolTail = &pktPool[MAX_POOL-1];
   pktPoolHead = &pktPool[0];
+
 #ifdef DEBUG_VERBOSE
   for(i=0; i<MAX_POOL; i++)
     printk("pktPool[%d] %p pktarray %p\n", i, &pktPool[i], pktPool[i].pbuf);
   printk("pktPoolHead %p pktPoolTail %p\n", pktPoolHead, pktPoolTail);
 #endif
+
   /* Allocate space for holding driver-private data - for storing driver
    * context.
    */
@@ -346,7 +416,7 @@ static int fc1553_pci_probe(struct pci_dev *pdev,const struct pci_device_id *id)
     /* Initialize DMA common registers? !!!! */
 
     /* Read DMA engine configuration and initialise data structures */
-    // ReadDMAEngineConfiguration(pdev, dmaData);
+    ReadDMAEngineConfiguration(pdev, dmaData);
 
     /* Save private data pointer in device structure */
     pci_set_drvdata(pdev, dmaData);
