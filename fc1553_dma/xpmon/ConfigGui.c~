@@ -107,8 +107,6 @@ Warning! Cannot without K7 macros.
 #define MIN_PKTSIZE 64
 #define MAX_PKTSIZE (32*1024)
 
-#undef HARDWARE
-
 char * Yaxis[MAX_Y_CNT] =
 { "   16", "   12", "    8", "    4" };
 
@@ -2174,7 +2172,7 @@ int main( int   argc,char *argv[] )
     printf("Logos are: %p %s %p %s\n", xlnx_logo, xlnx_logo, dev_logo, dev_logo);
 
     /* Open driver device file */
-#ifdef HARDWARE
+#ifdef 0 //HARDWARE
     if((statsfd = open(FILENAME, O_RDONLY)) < 0)
     {
         printf("Failed to open statistics file %s\n", FILENAME);

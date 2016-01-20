@@ -10,13 +10,27 @@
 #include <linux/mm.h>   /********for flag GFP_KERNEL**********/
 #include <linux/semaphore.h>
 #include <../arch/powerpc/include/asm/uaccess.h>
+#include <linux/version.h>
 
 #include "fc1553.h"
+
+#define DMA_BD_CNT 3999
+#define MAX_POOL 10
 
 int major=FC1553_MAJOR;
 
 int minor=FC1553_MINOR;
 
+/*******************************global variable for DMA***********************************/
+PktBuf pktArray[MAX_POOL][DMA_BD_CNT];
+struct PktPool pktPool[MAX_POOL];
+struct PktPool *pktPoolHead=NULL;
+struct PktPool *pktPoolTail=NULL;
+
+struct privData *dmaData=NULL;
+u32 DriverState = UNINITIALIZED;
+
+/*****************************************************************************************/
 module_param(major,int,S_IRUGO);
 module_param(minor,int,S_IRUGO);
 
@@ -60,14 +74,14 @@ static ssize_t fc1553_read(struct file *flip, char __user *buff, size_t count, l
   
   struct fc1553_pcie_card *pcard=flip->private_data;
   
-  u32 *addr=pcard->bar0_start;
-  
+  u8 *addr=pcard->bar0_start;
+  addr+=flip->f_pos;
   if (down_interruptible(&(pcard->sem)))
     return -ERESTARTSYS;
   /*
   printk(KERN_INFO "pcard->bar0_start=0x%x\n",pcard->bar0_start);
   */
-  *(pcard->mem_buf)=ioread32(addr+flip->f_pos);
+  *(pcard->mem_buf)=ioread32(addr);
   /*
   printk(KERN_INFO "read executed! read_val=0x%x\n",temp);
   */
@@ -90,8 +104,9 @@ static ssize_t fc1553_write(struct file *flip, const char __user *buff, size_t c
   
   struct fc1553_pcie_card *pcard=flip->private_data;
   
-  u32 *addr=pcard->bar0_start;
-  
+  u8 *addr=pcard->bar0_start;
+  addr+=flip->f_pos;
+
   if (down_interruptible(&(pcard->sem)))
     return -ERESTARTSYS;
   
@@ -108,7 +123,7 @@ static ssize_t fc1553_write(struct file *flip, const char __user *buff, size_t c
   printk(KERN_INFO "value of flip->f_ops=0x%x\n",flip->f_ops);
   */
   
-  iowrite32(*(pcard->mem_buf),addr+flip->f_pos);
+  iowrite32(*(pcard->mem_buf),addr);
   result=count;
   
  out:
@@ -165,30 +180,194 @@ static void fc1553_pci_remove(struct pci_dev *dev)
 }
 
 /***************************************probe fucntion*********************************************/
-static int fc1553_pci_probe(struct pci_dev *dev,const struct pci_device_id *id)
+static int fc1553_pci_probe(struct pci_dev *pdev,const struct pci_device_id *id)
 {
   /***************************variable for character dev setup****************************/
   int result,err;
   dev_t devno;
   u32 temp;
   //printk(KERN_INFO "==================================ENTER PROBE=================================\n");
-  /*******************************pci  devices   setup************************************/
-  /*enable pcie device*/
-  if (pci_enable_device(dev))
-    {
-      printk(KERN_INFO "Cann't enable pci device!\n");
-      return -EIO;
-    }
+  int pciRet;
+  int i;
   /*
-     //set DMA flags
-  if (pci_set_dma_mask(dev,DMA_MASK))
-    {
-      printk(KERN_INFO "Set DMA flags error!\n");
-      return -ENODEV;
-    }
+  static struct file_operations xdmaDevFileOps;
+  struct timer_list * timer = &poll_timer;
+  */
+
+  /* Initialize device before it is used by driver. Ask low-level
+   * code to enable I/O and memory. Wake up the device if it was
+   * suspended. Beware, this function can fail.
    */
+  pciRet = pci_enable_device(pdev);
+  if (pciRet < 0)
+    {
+      printk(KERN_ERR "PCI device enable failed.\n");
+      return pciRet;
+    }
+
+  /* Initialise packet pools for passing of packet arrays between this
+   * and user drivers.
+   */
+  for(i=0; i<MAX_POOL; i++)
+    {
+      pktPool[i].pbuf = pktArray[i];      // Associate array with pool.
+      
+      if(i == (MAX_POOL-1))
+	pktPool[i].next = NULL;
+      else
+	pktPool[i].next = &pktPool[i+1];
+    }
+  pktPoolTail = &pktPool[MAX_POOL-1];
+  pktPoolHead = &pktPool[0];
+#ifdef DEBUG_VERBOSE
+  for(i=0; i<MAX_POOL; i++)
+    printk("pktPool[%d] %p pktarray %p\n", i, &pktPool[i], pktPool[i].pbuf);
+  printk("pktPoolHead %p pktPoolTail %p\n", pktPoolHead, pktPoolTail);
+#endif
+  /* Allocate space for holding driver-private data - for storing driver
+   * context.
+   */
+  dmaData = kmalloc(sizeof(struct privData), GFP_KERNEL);
+  if(dmaData == NULL)
+    {
+      printk(KERN_ERR "Unable to allocate DMA private data.\n");
+      pci_disable_device(pdev);
+      return XST_FAILURE;
+    }
+  //printk("dmaData at %p\n", dmaData);
+  dmaData->barMask = 0;
+  dmaData->engineMask = 0;
+  dmaData->userCount = 0;
+
+#if defined(DEBUG_NORMAL) || defined(DEBUG_VERBOSE)
+  /* Display PCI configuration space of device. */
+  //ReadConfig(pdev);
+#endif
+
+#ifdef DEBUG_VERBOSE
+  /* Display PCI information on parent. */
+  //ReadRoot(pdev);
+#endif
   
-  /*****************************character devices setup***********************************/
+  /*
+   * Enable bus-mastering on device. Calls pcibios_set_master() to do
+   * the needed architecture-specific settings.
+   */
+  pci_set_master(pdev);
+  
+  /* Reserve PCI I/O and memory resources. Mark all PCI regions
+   * associated with PCI device as being reserved by owner. Do not
+   * access any address inside the PCI regions unless this call returns
+   * successfully.
+   */
+  pciRet = pci_request_regions(pdev, "FC1553_CARD");
+  if (pciRet < 0) {
+    printk(KERN_ERR "Could not request PCI regions.\n");
+    kfree(dmaData);
+    pci_disable_device(pdev);
+    return pciRet;
+  }
+
+  /* Returns success if PCI is capable of 32-bit DMA */
+  pciRet = pci_set_dma_mask(pdev, DMA_BIT_MASK(32));
+  if (pciRet < 0) 
+    {
+      printk(KERN_ERR "pci_set_dma_mask failed\n");
+      pci_release_regions(pdev);
+      kfree(dmaData);
+      pci_disable_device(pdev);
+      return pciRet;
+    }
+
+  /* First read all the BAR-related information. Then read all the
+   * DMA engine information. Map the BAR region to the system only
+   * when it is needed, for example, when a user requests it.
+   */
+  for(i=0; i<MAX_BARS; i++) 
+    {
+      u32 size;
+      
+      /* Atleast BAR0 must be there. */
+      if ((size = pci_resource_len(pdev, i)) == 0) {
+	if (i == 0) {
+	  printk(KERN_ERR "BAR 0 not valid, aborting.\n");
+	  pci_release_regions(pdev);
+	  kfree(dmaData);
+	  pci_disable_device(pdev);
+	  return XST_FAILURE;
+	}
+	else
+	  continue;
+      }
+      /* Set a bitmask for all the BARs that are present. */
+      else
+	(dmaData->barMask) |= ( 1 << i );
+      
+      /* Check all BARs for memory-mapped or I/O-mapped. The driver is
+       * intended to be memory-mapped.
+       */
+      if (!(pci_resource_flags(pdev, i) & IORESOURCE_MEM)) {
+	printk(KERN_ERR "BAR %d is of wrong type, aborting.\n", i);
+	pci_release_regions(pdev);
+	kfree(dmaData);
+	pci_disable_device(pdev);
+	return XST_FAILURE;
+      }
+
+        /* Get base address of device memory and length for all BARs */
+        dmaData->barInfo[i].basePAddr = pci_resource_start(pdev, i);
+        dmaData->barInfo[i].baseLen = size;
+
+        /* Map bus memory to CPU space. The ioremap may fail if size
+         * requested is too long for kernel to provide as a single chunk
+         * of memory, especially if users are sharing a BAR region. In
+         * such a case, call ioremap for more number of smaller chunks
+         * of memory. Or mapping should be done based on user request
+         * with user size. Neither is being done now - maybe later.
+         */
+        if((dmaData->barInfo[i].baseVAddr =
+            ioremap((dmaData->barInfo[i].basePAddr), size)) == 0UL)
+        {
+            printk(KERN_ERR "Cannot map BAR %d space, invalidating.\n", i);
+            (dmaData->barMask) &= ~( 1 << i );
+        }
+        else
+            log_verbose(KERN_INFO "[BAR %d] Base PA %x Len %d VA %x\n", i,(u32) (dmaData->barInfo[i].basePAddr),(u32) (dmaData->barInfo[i].baseLen),(u32) (dmaData->barInfo[i].baseVAddr));
+    }
+    log_verbose(KERN_INFO "Bar mask is 0x%x\n", (dmaData->barMask));
+    log_normal(KERN_INFO "DMA Base VA %x\n",(u32)(dmaData->barInfo[0].baseVAddr));
+
+    /* Disable global interrupts */
+    // Dma_mIntDisable(dmaData->barInfo[0].baseVAddr);
+
+    dmaData->pdev=pdev;
+    dmaData->index = pdev->device;
+    
+    /* Initialize DMA common registers? !!!! */
+
+    /* Read DMA engine configuration and initialise data structures */
+    // ReadDMAEngineConfiguration(pdev, dmaData);
+
+    /* Save private data pointer in device structure */
+    pci_set_drvdata(pdev, dmaData);
+
+  /*********************************pci  devices   setup**************************************/
+  /*enable pcie device
+    if (pci_enable_device(dev))
+    {
+    printk(KERN_INFO "Cann't enable pci device!\n");
+    return -EIO;
+    }
+    
+    //set DMA flags
+    if (pci_set_dma_mask(dev,DMA_MASK))
+    {
+    printk(KERN_INFO "Set DMA flags error!\n");
+    return -ENODEV;
+    }
+  *******************************************************************************************/
+  
+  /*******************************character devices setup************************************/
   /*static old_manner register*/
   if (major)
     {
@@ -234,27 +413,27 @@ static int fc1553_pci_probe(struct pci_dev *dev,const struct pci_device_id *id)
     }
   */
   /****************initialize member of char dev, and setup chr dev to list*****************/
-  pfc1553_card->resource.res_start=pci_resource_start(dev,0);
-  pfc1553_card->resource.res_end=pci_resource_end(dev,0);
-  pfc1553_card->resource.res_length=pci_resource_len(dev,0);
+  pfc1553_card->resource.res_start=pci_resource_start(pdev,0);
+  pfc1553_card->resource.res_end=pci_resource_end(pdev,0);
+  pfc1553_card->resource.res_length=pci_resource_len(pdev,0);
   pfc1553_card->resource.virt_res_start=phys_to_virt(pfc1553_card->resource.res_start);
   pfc1553_card->resource.virt_res_end=phys_to_virt(pfc1553_card->resource.res_end);
-  pfc1553_card->pdev=dev;
+  pfc1553_card->pdev=pdev;
   /********************************request for pcie resource********************************/
-  
+  /*
   if (pci_request_region(dev,0,"FC_1553"))
     {
       printk(KERN_INFO "fc1553_card request region error!\n");
       goto fail_1;
     }
-  
-  pfc1553_card->addr_map=pci_iomap(dev,0,pfc1553_card->resource.res_length);
+  */
+  pfc1553_card->addr_map=dmaData->barInfo[0].baseVAddr;
   if (!pfc1553_card->addr_map)
     {
       printk(KERN_INFO "pci_iomap error!\n");
       goto fail_1;
     }
-  pfc1553_card->bar0_start=pfc1553_card->addr_map+0x18000;
+  pfc1553_card->bar0_start=pfc1553_card->addr_map;//+0x18000;
 	
   /********************************************************************************************
   printk(KERN_INFO "pfc1553_card->resource.res_start=0x%x\n",pfc1553_card->resource.res_start);
@@ -286,7 +465,7 @@ static int fc1553_pci_probe(struct pci_dev *dev,const struct pci_device_id *id)
   return OK;
   
  fail_1:
-  fc1553_pci_remove(dev); 
+  fc1553_pci_remove(pdev); 
  fail:
   //fc1553_exit();
  result=-ENODEV;

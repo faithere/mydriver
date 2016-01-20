@@ -1,0 +1,1 @@
+cmd_/home/wzl/driver_p5020/fc1553_pcie/mydriver/fc1553_dma/xdma/xdma_k7.ko := ld -r -m elf_x86_64 -T /home/wzl/linux-3.0.48/scripts/module-common.lds --build-id  -o /home/wzl/driver_p5020/fc1553_pcie/mydriver/fc1553_dma/xdma/xdma_k7.ko /home/wzl/driver_p5020/fc1553_pcie/mydriver/fc1553_dma/xdma/xdma_k7.o /home/wzl/driver_p5020/fc1553_pcie/mydriver/fc1553_dma/xdma/xdma_k7.mod.o

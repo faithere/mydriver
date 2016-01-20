@@ -2,7 +2,7 @@ obj-m := sguser.c
 obj-m := xrawdata0.o
 xrawdata0-objs :=  sguser.o 
 
-KDIR= /home/wzl/linux-3.0.48
+KDIR= /home/wzl/linux-3.0.8
 ROOTDIR = $(PWD)
 EXTRA_CFLAGS += -DK7_TRD -DX86_PC -DUSE_IO_MACROS -DNWLDMA -DXRAWDATA0  -I $(ROOTDIR)/xrawdata0/ -I $(ROOTDIR)/include/ 
 #EXTRA_CFLAGS += -DK7_TRD -DX86_PC -DUSE_IO_MACROS -DNWLDMA -DXRAWDATA0 -DDATA_VERIFY -I $(ROOTDIR)/xrawdata0/ -I $(ROOTDIR)/include/ 

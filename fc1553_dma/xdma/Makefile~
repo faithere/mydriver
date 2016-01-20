@@ -5,7 +5,7 @@ obj-m += xdma_user.o
 obj-m := xdma_k7.o
 xdma_k7-objs :=  xdma_base.o xdma.o xdma_bdring.o xdma_user.o
 
-KDIR= /home/wzl/linux-3.0.48
+KDIR= /home/wzl/linux-3.0.8
 ROOTDIR = $(PWD)
 
 EXTRA_CFLAGS += -DK7_TRD -DX86_PC -DNWLDMA -DXENV_LINUX -DUSE_IO_MACROS -DXLITTLE_ENDIAN -DPCI_LINUX -I $(ROOTDIR)/xdma -I $(ROOTDIR)/include 
