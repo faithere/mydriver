@@ -44,20 +44,6 @@ struct buf_write
 };
 */
 
-struct fc1553_pcie_card 
-{
-  struct pci_bar resource;
-  
-  u32 int_num;
-  void __iomem *addr_map;
-  u32 *bar0_start;
-  u32 *mem_buf;
-  
-  struct pci_dev *pdev;
-  struct semaphore sem;
-  struct cdev cdev;
-};
-
 typedef struct {
   u32 ChanBase;
   u32 IsRxChannel;        /**< Is this a receive channel ? */
@@ -86,7 +72,7 @@ typedef struct {
 
 typedef struct {
     struct pci_dev * pdev;  /**< PCIe Device handle */
-    u32 RegBase;            /**< Virtual base address of DMA engine */
+    void __iomem * RegBase;            /**< Virtual base address of DMA engine */
 
     u32 EngineState;        /**< State of the DMA engine */
     Dma_BdRing BdRing;      /**< BD container for DMA engine */
@@ -109,8 +95,8 @@ struct privData
   struct pci_dev *pdev;
   u32 barMask;
   struct {
-    unsigned long basePAddr;
-    unsigned long baseLen;
+    void *basePAddr;
+    u32 baseLen;
     void __iomem *baseVAddr;
   }barInfo[MAX_BARS];
   u32 index;
@@ -183,7 +169,23 @@ struct PktPool
 #endif
 
 /*******************DMA CONTROLLER REGISTER******************/
-#define XIo_In32(addr)      (ioread32((unsigned char *)(addr)))
-#define XIo_Out32(addr, data) (iowrite32((data), (unsigned char *)(addr)))
+#define XIo_In32(addr)      ioread32((u32 *)(addr))
+#define XIo_Out32(addr, data) iowrite32((data), (u32 *)(addr))
+
+/****************************************************************************/
+/**
+* Retrieve the ring object. This object can be used in the various Ring
+* API functions. This could be a C2S or S2C ring.
+*
+* @param  InstancePtr is the DMA engine to operate on.
+*
+* @return BdRing object
+*
+* @note
+* C-style signature:
+*    Dma_BdRing Dma_mGetRing(Dma_Engine * InstancePtr)
+*
+*****************************************************************************/
+#define Dma_mGetRing(InstancePtr) ((InstancePtr)->BdRing)
 
 #endif

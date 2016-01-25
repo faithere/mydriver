@@ -14,6 +14,7 @@
 
 #include "fc1553.h"
 #include "xdma_hw.h"
+#include "xstatus.h"
 
 #define DMA_BD_CNT 3999
 #define MAX_POOL 10
@@ -32,6 +33,28 @@ struct privData *dmaData=NULL;
 u32 DriverState = UNINITIALIZED;
 
 /*****************************************************************************************/
+
+/*******************************external function*****************************************/
+
+
+/*****************************************************************************************/
+
+/**********************************type-defination****************************************/
+struct fc1553_pcie_card 
+{
+  struct pci_bar resource;
+  
+  u32 int_num;
+  void __iomem *addr_map;
+  u32 *bar0_start;
+  u32 *mem_buf;
+  
+  struct pci_dev *pdev;
+  struct semaphore sem;
+  struct cdev cdev;
+};
+/******************************************************************************************/
+
 module_param(major,int,S_IRUGO);
 module_param(minor,int,S_IRUGO);
 
@@ -80,11 +103,11 @@ static ssize_t fc1553_read(struct file *flip, char __user *buff, size_t count, l
   if (down_interruptible(&(pcard->sem)))
     return -ERESTARTSYS;
 
-//  printk(KERN_INFO "pcard->bar0_start=0x%x,actual read address is 0x%x\n",pcard->bar0_start,(u32)addr);
+  //printk(KERN_INFO "pcard->bar0_start=0x%x,actual read address is 0x%x\n",pcard->bar0_start,(u32)addr);
 
   *(pcard->mem_buf)=ioread32(addr);
 
-//  printk(KERN_INFO "read executed! read_val=0x%x\n",temp);
+  // printk(KERN_INFO "read executed! read_val=0x%x\n",temp);
 
   count=sizeof(pcard->mem_buf);
   if (copy_to_user(buff,pcard->mem_buf,count))
@@ -179,73 +202,197 @@ static void fc1553_pci_remove(struct pci_dev *dev)
   printk(KERN_INFO "pci remove called!\n");
   */
 }
+/********************************************DMA Controller Function***********************************/
+/*****************************************************************************/
+/**
+* Reset the DMA engine.
+*
+* Should not be invoked during initialization stage because hardware has
+* just come out of a system reset. Should be invoked during shutdown stage.
+*
+* New BD fetches will stop immediately. Reset will be completed once the
+* user logic completes its reset. DMA disable will be completed when the
+* BDs already being processed are completed.
+*
+* @param  InstancePtr is a pointer to the DMA engine instance to be worked on.
+*
+* @return None.
+*
+* @note
+*   - If the hardware is not working properly, and the self-clearing reset
+*     bits do not clear, this function will be terminated after a timeout.
+*
+******************************************************************************/
+void Dma_Reset(Dma_Engine * InstancePtr)
+{
+  Dma_BdRing *RingPtr;
+  int i=0;
+  u32 dirqval;
+  
+  log_verbose(KERN_INFO "Resetting DMA instance %p\n", InstancePtr);
+  
+  RingPtr = &Dma_mGetRing(InstancePtr);
+ 
+ 
+  /* Disable engine interrupts before issuing software reset */
+  Dma_mEngIntDisable(InstancePtr);
+
+  /* Start reset process then wait for completion. Disable DMA and
+   * assert reset request at the same time. This causes user logic to
+   * be reset.
+   */
+  log_verbose(KERN_INFO "Disabling DMA. User reset request.\n");
+  i=0;
+  Dma_mSetCrSr(InstancePtr, (DMA_ENG_DISABLE|DMA_ENG_USER_RESET));
+  
+  /* Loop until the reset is done. The bits will self-clear. */
+  while (Dma_mGetCrSr(InstancePtr) & (DMA_ENG_STATE_MASK|DMA_ENG_USER_RESET)) 
+    {
+      i++;
+      if(i >= 100000)
+        {
+	  printk(KERN_INFO "CR is now 0x%x\n", Dma_mGetCrSr(InstancePtr));
+	  break;
+        }
+    }
+
+  /* Now reset the DMA engine, and wait for its completion. */
+  log_verbose(KERN_INFO "DMA reset request.\n");
+  i=0;
+  Dma_mSetCrSr(InstancePtr, (DMA_ENG_RESET));
+
+  /* Loop until the reset is done. The bit will self-clear. */
+  while (Dma_mGetCrSr(InstancePtr) & DMA_ENG_RESET) 
+    {
+      i++;
+      if(i >= 100000)
+        {
+	  printk(KERN_INFO "CR is now 0x%x\n", Dma_mGetCrSr(InstancePtr));
+	  break;
+        }
+    }
+  
+  /* Clear Interrupt register. Not doing so may cause interrupts
+   * to be asserted after the engine reset if there is any
+   * interrupt left over from before.
+   */
+  dirqval = Dma_mGetCrSr(InstancePtr);
+  printk("While resetting engine, got %x in eng status reg\n", dirqval);
+  if(dirqval & DMA_ENG_INT_ACTIVE_MASK)
+    Dma_mEngIntAck(InstancePtr, (dirqval & DMA_ENG_ALLINT_MASK));
+
+  RingPtr->RunState = XST_DMA_SG_IS_STOPPED;
+}
+
+
+/*****************************************************************************/
+/**
+ * This function initializes a DMA engine.  This function must be called
+ * prior to using the DMA engine. Initialization of an engine includes setting
+ * up the register base address, setting up the instance data, and ensuring the
+ * hardware is in a quiescent state.
+ *
+ * @param  InstancePtr is a pointer to the DMA engine instance to be worked on.
+ * @param  BaseAddress is where the registers for this engine can be found.
+ *
+ * @return None.
+ *
+ *****************************************************************************/
+void Dma_Initialize(Dma_Engine * InstancePtr, u32 *BaseAddress, u32 Type)
+{
+  log_verbose(KERN_INFO "Initializing DMA()\n");
+  
+  /* Set up the instance */
+  log_verbose(KERN_INFO "Clearing DMA instance %p\n", InstancePtr);
+  memset(InstancePtr, 0, sizeof(Dma_Engine));
+  
+  log_verbose(KERN_INFO "DMA base address is 0x%x\n", BaseAddress);
+  InstancePtr->RegBase = BaseAddress;
+  InstancePtr->Type = Type;
+
+  /* Initialize the engine and ring states. */
+  InstancePtr->BdRing.RunState = XST_DMA_SG_IS_STOPPED;
+  InstancePtr->EngineState = INITIALIZED;
+  
+  /* Initialize the ring structure */
+  InstancePtr->BdRing.ChanBase = BaseAddress;
+  if(Type == DMA_ENG_C2S)
+    InstancePtr->BdRing.IsRxChannel = 1;
+  else
+    InstancePtr->BdRing.IsRxChannel = 0;
+  
+  /* Reset the device and return */
+  Dma_Reset(InstancePtr);
+}
 
 /*
  *Get Configuration of DMA Engine
  */
 static void ReadDMAEngineConfiguration(struct pci_dev * pdev, struct privData * dmaInfo)
 {
-    u32 base, offset;
-    u32 val, type, dirn, num, bc;
-    int i;
-    Dma_Engine * eptr;
+  u8* base;
+  u32 offset;
+  u32 val, type, dirn, num, bc;
+  int i;
+  Dma_Engine * eptr;
 
-    /* DMA registers are in BAR0 */
-    base = (u32)(dmaInfo->barInfo[0].baseVAddr);
-    printk(KERN_INFO "value of base is 0x%x\n",base);
-
-    printk(KERN_INFO "Hardware design version %x\n", XIo_In32(base+0x8000));
-
-    /* Walk through the capability register of all DMA engines */
-    for(offset = DMA_OFFSET, i=0; offset < DMA_SIZE; offset += DMA_ENGINE_PER_SIZE, i++)
+  /* DMA registers are in BAR0 */
+  base = (dmaInfo->barInfo[0].baseVAddr);
+  
+  printk(KERN_INFO "Hardware design version 0x%x\n", XIo_In32(base+0x8000));
+  
+  /* Walk through the capability register of all DMA engines */
+  for(offset = DMA_OFFSET, i=0; offset < DMA_SIZE; offset += DMA_ENGINE_PER_SIZE, i++)
     {
-        log_verbose(KERN_INFO "Reading engine capability from %x\n",(base+offset+REG_DMA_ENG_CAP));
-        val = Dma_mReadReg((base+offset), REG_DMA_ENG_CAP);
-        log_verbose(KERN_INFO "REG_DMA_ENG_CAP returned %x\n", val);
-
-        if(val & DMA_ENG_PRESENT_MASK)
+      log_verbose(KERN_INFO "Reading engine capability from 0x%x\n",(base+offset+REG_DMA_ENG_CAP));
+      val = Dma_mReadReg((base+offset), REG_DMA_ENG_CAP);
+      log_verbose(KERN_INFO "REG_DMA_ENG_CAP returned 0x%x\n", val);
+      
+      if(val & DMA_ENG_PRESENT_MASK)
         {
-            log_verbose(KERN_INFO "Engine capability is %x\n", val);
-            eptr = &(dmaInfo->Dma[i]);
+	  log_verbose(KERN_INFO "Engine capability is %x\n", val);
+	  eptr = &(dmaInfo->Dma[i]);
+	  
+	  log_verbose(KERN_INFO "DMA Engine present at offset %x: ", offset);
 
-            log_verbose(KERN_INFO "DMA Engine present at offset %x: ", offset);
+	  dirn = (val & DMA_ENG_DIRECTION_MASK);
+	  if(dirn == DMA_ENG_C2S)
+	    printk("C2S, ");
+	  else
+	    printk("S2C, ");
 
-            dirn = (val & DMA_ENG_DIRECTION_MASK);
-            if(dirn == DMA_ENG_C2S)
-                printk("C2S, ");
-            else
-                printk("S2C, ");
+	  type = (val & DMA_ENG_TYPE_MASK);
+	  if(type == DMA_ENG_BLOCK)
+	    printk("Block DMA, ");
+	  else if(type == DMA_ENG_PACKET)
+	    printk("Packet DMA, ");
+	  else
+	    printk("Unknown DMA %x, ", type);
 
-            type = (val & DMA_ENG_TYPE_MASK);
-            if(type == DMA_ENG_BLOCK)
-                printk("Block DMA, ");
-            else if(type == DMA_ENG_PACKET)
-                printk("Packet DMA, ");
-            else
-                printk("Unknown DMA %x, ", type);
+	  num = (val & DMA_ENG_NUMBER) >> DMA_ENG_NUMBER_SHIFT;
+	  printk("Eng. Number %d, ", num);
 
-            num = (val & DMA_ENG_NUMBER) >> DMA_ENG_NUMBER_SHIFT;
-            printk("Eng. Number %d, ", num);
+	  bc = (val & DMA_ENG_BD_MAX_BC) >> DMA_ENG_BD_MAX_BC_SHIFT;
+	  printk("Max Byte Count 2^%d\n", bc);
 
-            bc = (val & DMA_ENG_BD_MAX_BC) >> DMA_ENG_BD_MAX_BC_SHIFT;
-            printk("Max Byte Count 2^%d\n", bc);
+	  if(type != DMA_ENG_PACKET) {
+	    log_normal(KERN_ERR "This driver is capable of only Packet DMA\n");
+	    continue;
+	  }
 
-            if(type != DMA_ENG_PACKET) {
-                log_normal(KERN_ERR "This driver is capable of only Packet DMA\n");
-                continue;
-            }
+	  /* Initialise this engine's data structure. This will also
+	   * reset the DMA engine.
+	   */
+	  Dma_Initialize(eptr, (base + offset), dirn);
+	  eptr->pdev = pdev;
 
-            /* Initialise this engine's data structure. This will also
-             * reset the DMA engine.
-             */
-	    //temp del  Dma_Initialize(eptr, (base + offset), dirn);
-            eptr->pdev = pdev;
-
-            dmaInfo->engineMask |= (1LL << i);
+	  dmaInfo->engineMask |= (1LL << i);
         }
     }
-    log_verbose(KERN_INFO "Engine mask is 0x%llx\n", dmaInfo->engineMask);
+  log_verbose(KERN_INFO "Engine mask is 0x%llx\n", dmaInfo->engineMask);
 }
+
+/******************************************DMA FUNCITON END*********************************************/
 
 /***************************************probe fucntion*********************************************/
 static int fc1553_pci_probe(struct pci_dev *pdev,const struct pci_device_id *id)
@@ -388,7 +535,7 @@ static int fc1553_pci_probe(struct pci_dev *pdev,const struct pci_device_id *id)
         dmaData->barInfo[i].basePAddr = pci_resource_start(pdev, i);
         dmaData->barInfo[i].baseLen = size;
 
-        /* Map bus memory to CPU space. The ioremap may fail if size
+	/* Map bus memory to CPU space. The ioremap may fail if size
          * requested is too long for kernel to provide as a single chunk
          * of memory, especially if users are sharing a BAR region. In
          * such a case, call ioremap for more number of smaller chunks
@@ -408,7 +555,7 @@ static int fc1553_pci_probe(struct pci_dev *pdev,const struct pci_device_id *id)
     log_normal(KERN_INFO "DMA Base VA %x\n",(u32)(dmaData->barInfo[0].baseVAddr));
 
     /* Disable global interrupts */
-    // Dma_mIntDisable(dmaData->barInfo[0].baseVAddr);
+    Dma_mIntDisable(dmaData->barInfo[0].baseVAddr);
 
     dmaData->pdev=pdev;
     dmaData->index = pdev->device;
