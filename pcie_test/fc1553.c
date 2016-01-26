@@ -198,7 +198,7 @@ static int fc1553_pci_probe(struct pci_dev *pdev,const struct pci_device_id *id)
 {
   /***************************variable for character dev setup****************************/
   int result,err,pciRet;
-
+  u8 myirq;
   u64 addr_u64;
   u32 * addr_pu32;
   void *addr_pvoid;
@@ -229,6 +229,13 @@ static int fc1553_pci_probe(struct pci_dev *pdev,const struct pci_device_id *id)
   printk(KERN_INFO "addr_virtual=0x%p\n",addr_virtual);
   
   printk(KERN_INFO "ioread32(addr_virtual)=0x%x\n",ioread32(addr_virtual));
+  result=pci_read_config_byte(pdev,60,&myirq);
+  if (result)
+	{
+		printk(KERN_INFO "read config error!\n");
+		return -1;
+	}
+  printk(KERN_INFO "myirq=0x%x\n",myirq);
   //printk(KERN_INFO "ioread32(addr_pu32)=0x%x\n",ioread32(addr_pu32));
   //printk(KERN_INFO "ioread32(addr_pvoid)=0x%x\n",ioread32(addr_pvoid));
 
