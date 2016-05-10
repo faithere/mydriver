@@ -1,0 +1,4 @@
+0x00000000	DmaRegister	/home/wzl/driver_p5020/fc1553_pcie/mydriver/fc1553_dma/xdma/xdma_k7	EXPORT_SYMBOL
+0x00000000	DmaFifoEmptyWait	/home/wzl/driver_p5020/fc1553_pcie/mydriver/fc1553_dma/xdma/xdma_k7	EXPORT_SYMBOL
+0x00000000	DmaUnregister	/home/wzl/driver_p5020/fc1553_pcie/mydriver/fc1553_dma/xdma/xdma_k7	EXPORT_SYMBOL
+0x00000000	DmaSendPkt	/home/wzl/driver_p5020/fc1553_pcie/mydriver/fc1553_dma/xdma/xdma_k7	EXPORT_SYMBOL
