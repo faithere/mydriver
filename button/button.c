@@ -24,15 +24,6 @@ struct keybutton
 
 static int button_init(void)
 {
-
-  
-
-
-}
-
-
-static void button_exit(void)
-{
   dev_t dev_num;//device number
   if (button_major)
     {
@@ -54,11 +45,21 @@ static void button_exit(void)
 	}
       button_major=MAJOR(dev_num);
     }
+  
+
+  
+
 
 }
 
+
+static void button_exit(void)
+{
+}
+
 MODULE_AUTHOR("Faithere");
-MODULE_LICENSE("Dual BSD/GPL")
+MODULE_LICENSE("Dual BSD/GPL");
+MODULE_DESCRIPTION("Keybutton driver for FS2410");
 module_init(button_init);
 module_exit(button_exit);
 
