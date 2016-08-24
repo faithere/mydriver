@@ -6,30 +6,44 @@
 #include <linux/fs.h>
 #include <linux/cdev.h>
 
+#include <linux/time.h>
+#include <linux/timer.h>
+
+#include <asm/irqs.h>  //define for irq num
 #include <linux/interrupt.h>
 
 
 /*******************MacroDef*******************/
-#define EINT0  0
-#define EINT1  1
-#define EINT2  2
-#define EINT3  3
+#define BUTTON_IRQ_1 EINT0
+#define BUTTON_IRQ_2 EINT1
+#define BUTTON_IRQ_3 EINT2
+#define BUTTON_IRQ_4 EINT3
 
+#define BUTTON_IRQ_NUM 4
+#define BUTTON_NUM 16
 /**********************************************/
+
 /*******************Glb Data*******************/
 int button_major;
 int button_minor=1;
 int button_dev_num=1;
 
+//button qudou delay time value
+int tdelay=20;
+module_param(tdelay,int,0);
 
 //key button character device data struct
 struct keybutton
 {
+  unsigned short button_irq_num[BUTTON_IRQ_NUM];
+  unsigned short key_value[BUTTON_NUM];
+  
   struct semphore sem;
-  int key_value;
+  struct timer_list delay_timer;
   struct cdev cdev;
 };
 struct keybutton *pkeybutton;
+/**********************************************/
 
 //character file operations ops
 static struct file_operations keybutton_fops
@@ -68,9 +82,27 @@ static irqreturn_t button_irq_handler(int irq, void *dev_id, struct pt_regs *reg
   return IRQ_HANDLED;
 }
 
-static void irq_tl_handle(unsigned long)
+static void irq_tl_handle(int irq, void *dev_id, struct pt_regs *regs)
 {
+  struct keybutton *pkeybutton=(struct keybutton *)data;
+  long curtime=jiffies;
 
+  //find which button is pressed
+  switch (irq)
+    {
+    case BUTTON_IRQ_1:
+      break;
+    case BUTTON_IRQ_2:
+      break;
+    case BUTTON_IRQ_3:
+      break;
+    case BUTTON_IRQ_4:
+      break;
+    }
+  //register timer
+  pkeybutton->delay_timer.function=delay_timer_fn;
+  pkeybutton->delay_timer.expire=curtime+tdelay;
+  add_timer(&pkeybutton->delay_timer);
 
 
 }
@@ -80,32 +112,41 @@ static void irq_tl_handle(unsigned long)
 int keybutton_open(struct inode *inode, struct file *flip)
 {
   int res;
-
+  unsigned short i=0;
   struct keybutton *keybutton_dev;
-  keybutton_dev=container_of(inode->i_cdev,struct keybutton,cdev);
-  flip->private_data=keybutton_dev;
 
-  //request for irq
-  res=request_irq(EINT0,button_irq_handler,IRQF_TRIGGER_FALLING,IRQF_SHARED,NULL);
-  if (!res)  //irq request fail
+  keybutton_dev=container_of(inode->i_cdev,struct keybutton,cdev);
+  flip->private_data=keybutton_dev; //Can we use global pointer pkeybutton directly?
+
+
+
+  for (i=0;i<BUTTON_IRQ_NUM;i++)
     {
-      if (res==-EINVAL)
+      //request for irq
+      res=request_irq(keybutton_dev->button_irq_num[i],button_irq_handler,IRQF_TRIGGER_FALLING,IRQF_SHARED,NULL);
+      if (!res)  //irq request fail
 	{
-	  printk(KERN_INFO "IRQ request number invalid!\n");
-	  free_irq(EINT0,NULL);
-	  return res;
-	}
-      if (res==-EBUSY)
-	{
-	  printk(KERN_INFO "IRQ request number already used!\n");
-	  free_irq(EINT0,NULL);
-	  return res;
+	  if (res==-EINVAL)
+	    {
+	      printk(KERN_INFO "IRQ request number invalid!\n");
+	      free_irq(keybutton_dev->button_irq_num[i],NULL);
+	      return res;
+	    }
+	  if (res==-EBUSY)
+	    {
+	      printk(KERN_INFO "IRQ request number already used!\n");
+	      free_irq(keybutton_dev->button_irq_num[i],NULL);
+	      return res;
+	    }
 	}
     }
-  printk(KERN_INFO "IRQ request register success!\n");
-  //Enable irq
-  irq_enable(EINT0);
+  printk(KERN_INFO "All IRQ request register success!\n");
   
+  for (i=0;i<BUTTON_IRQ_NUM;i++)
+    {
+      //Enable irq
+      irq_enable(keybutton_dev->button_irq_num[i]);
+    }
 
 }
 
@@ -145,7 +186,14 @@ static int button_init(void)
     }
   memset(pkeybutton,0,sizeof(struct keybutton));
 
+  //init timer & semphore
   sema_init(&pkeybutton->sem,1);
+  init_timer(&pkeybutton->delay_timer);
+  //dispatch IRQ 
+  pkeybutton->button_irq_num[0]=BUTTON_IRQ_1;
+  pkeybutton->button_irq_num[1]=BUTTON_IRQ_2;
+  pkeybutton->button_irq_num[2]=BUTTON_IRQ_3;
+  pkeybutton->button_irq_num[3]=BUTTON_IRQ_4;
 
   cdev_init(&pkeybutton->cdev,&keybutton_fops);//void type function
   
@@ -158,9 +206,7 @@ static int button_init(void)
   printk(KERN_INFO "Character device keybutton add success!\n");
   
   //request interrupt
-  //I remeber,interrupt request should init in the open function,for interrupt resouce is 
-  //in short
-
+  //I remeber,interrupt request should init in the open function,for interrupt resouce is in short
 
 fail:
   
