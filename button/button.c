@@ -9,16 +9,17 @@
 #include <linux/time.h>
 #include <linux/timer.h>
 
-#include <asm/irqs.h>  //define for irq num
 #include <linux/interrupt.h>
 #include <asm/irq.h>  //IRQ TYPE IRQT_FALLING
+#include <linux/irq.h>
+#include <asm-arm/arch-s3c2410/irqs.h>
 
-
+#include <asm/io.h>  //for ioread32 etc
 /*******************MacroDef*******************/
-#define BUTTON_IRQ_1 EINT0
-#define BUTTON_IRQ_2 EINT1
-#define BUTTON_IRQ_3 EINT2
-#define BUTTON_IRQ_4 EINT3
+#define BUTTON_IRQ_1 IRQ_EINT0
+#define BUTTON_IRQ_2 IRQ_EINT2
+#define BUTTON_IRQ_3 IRQ_EINT11
+#define BUTTON_IRQ_4 IRQ_EINT19
 
 #define BUTTON_IRQ_NUM 4 //BUTTON ROW NUM
 #define BUTTON_NUM 16
@@ -62,41 +63,122 @@ DECLARE_TASKLET(button_tasklet,irq_tl_handle,0);
 /*****************TIMER_FUNC******************/
 static void delay_timer_fn(unsigned long data)
 {
-  unsigned short i;
   struct keybutton *pkt=(struct keybutton *)data;
+  unsigned int reg_value=0;
   //find which button is pressed
   switch (pkt->cur_irq)
     {
     case BUTTON_IRQ_1:
-      for(i=0;i<BUTTON_COLUM;i++)
-	{
-	  if (readl(pkt->gpio_mem[i])&0x1) //button 1
+      reg_value=ioread32((unsigned int *)pkt->gpio_mem[0]);
+	if (reg_value&0x800) //button 10
+	  {
+	    pkt->key_value=10;
+	    //	    break;
+	  }	  
+      
+      reg_value=ioread32((unsigned int *)pkt->gpio_mem[1]);
+	if (reg_value&0x40) //button 11
+	  {
+	    pkt->key_value=11;
+	    //	    break;
+	  }	  
+
+      reg_value=ioread32((unsigned int *)pkt->gpio_mem[2]);
+	if (reg_value&0x2000) //button 12
+	  {
+	    pkt->key_value=12;
+	    //	    break;
+	  }	  
+      reg_value=ioread32((unsigned int *)pkt->gpio_mem[3]);
+	if (reg_value&0x4) //button 16
 	    {
-	      pkt->key_value=1;
-	      break;
+	      pkt->key_value=16;
+	    //      break;
 	    }	  
-	  if (readl(pkt->gpio_mem[i])&0x2) //button 2
-	    {
-	      pkt->key_value=2;
-	      break;
-	    }	  
-	  if (readl(pkt->gpio_mem[i])&0x3) //button 3
-	    {
-	      pkt->key_value=3;
-	      break;
-	    }	 
-	  if (readl(pkt->gpio_mem[i])&0x4) //button 4
-	    {
-	      pkt->key_value=4;
-	      break;
-	    }	  
-	}
       break;
     case BUTTON_IRQ_2:
+      reg_value=ioread32((unsigned int *)pkt->gpio_mem[0]);
+	if (reg_value&0x800) //button 7
+	  {
+	    pkt->key_value=7;
+	    //	    break;
+	  }	  
+      
+      reg_value=ioread32((unsigned int *)pkt->gpio_mem[1]);
+	if (reg_value&0x40) //button 8
+	  {
+	    pkt->key_value=8;
+	    //	    break;
+	  }	  
+
+      reg_value=ioread32((unsigned int *)pkt->gpio_mem[2]);
+	if (reg_value&0x2000) //button 9
+	  {
+	    pkt->key_value=9;
+	    //	    break;
+	  }	  
+      reg_value=ioread32((unsigned int *)pkt->gpio_mem[3]);
+	if (reg_value&0x4) //button 15
+	    {
+	      pkt->key_value=15;
+	    //      break;
+	    }	  
       break;
     case BUTTON_IRQ_3:
+      reg_value=ioread32((unsigned int *)pkt->gpio_mem[0]);
+	if (reg_value&0x800) //button 4
+	  {
+	    pkt->key_value=4;
+	    //	    break;
+	  }	  
+      
+      reg_value=ioread32((unsigned int *)pkt->gpio_mem[1]);
+	if (reg_value&0x40) //button 5
+	  {
+	    pkt->key_value=5;
+	    //	    break;
+	  }	  
+
+      reg_value=ioread32((unsigned int *)pkt->gpio_mem[2]);
+	if (reg_value&0x2000) //button 6
+	  {
+	    pkt->key_value=6;
+	    //	    break;
+	  }	  
+      reg_value=ioread32((unsigned int *)pkt->gpio_mem[3]);
+	if (reg_value&0x4) //button 14
+	    {
+	      pkt->key_value=14;
+	    //      break;
+	    }	  
       break;
     case BUTTON_IRQ_4:
+      reg_value=ioread32((unsigned int *)pkt->gpio_mem[0]);
+	if (reg_value&0x800) //button 1
+	  {
+	    pkt->key_value=1;
+	    //	    break;
+	  }	  
+      
+      reg_value=ioread32((unsigned int *)pkt->gpio_mem[1]);
+	if (reg_value&0x40) //button 2
+	  {
+	    pkt->key_value=2;
+	    //	    break;
+	  }	  
+
+      reg_value=ioread32((unsigned int *)pkt->gpio_mem[2]);
+	if (reg_value&0x2000) //button 3
+	  {
+	    pkt->key_value=3;
+	    //	    break;
+	  }	  
+      reg_value=ioread32((unsigned int *)pkt->gpio_mem[3]);
+	if (reg_value&0x4) //button 13
+	    {
+	      pkt->key_value=13;
+	    //      break;
+	    }	  
       break;
     }
   del_timer(&pkt->delay_timer);
@@ -106,6 +188,7 @@ static void delay_timer_fn(unsigned long data)
 /*****************IRQ_FUNC********************/
 static irqreturn_t button_irq_handler(int irq, void *dev_id, struct pt_regs *regs)
 {
+  long curtime=jiffies;
   //first disable irq num
   disable_irq(irq);
 
@@ -114,7 +197,7 @@ static irqreturn_t button_irq_handler(int irq, void *dev_id, struct pt_regs *reg
   //register timer
   pkeybutton->delay_timer.data=(unsigned long)pkeybutton;
   pkeybutton->delay_timer.function=delay_timer_fn;
-  pkeybutton->delay_timer.expire=curtime+tdelay;
+  pkeybutton->delay_timer.expires=curtime+tdelay;
   add_timer(&pkeybutton->delay_timer);
 
 #ifdef TASKLET_ENABLE
@@ -131,9 +214,6 @@ static void irq_tl_handle(int irq, void *dev_id, struct pt_regs *regs)
 {
   struct keybutton *pkeybutton=(struct keybutton *)data;
   long curtime=jiffies;
-
-
-
 }
 #endif
 /*********************************************/
@@ -145,6 +225,7 @@ static int keybutton_open(struct inode *inode, struct file *flip)
   int res;
   unsigned short i=0;
   struct keybutton *keybutton_dev;
+
 
   keybutton_dev=container_of(inode->i_cdev,struct keybutton,cdev);
   flip->private_data=keybutton_dev; //Can we use global pointer pkeybutton directly?
@@ -197,7 +278,7 @@ static ssize_t keybutton_read(struct file * flip, char __user *buf , size_t coun
   if (pkt->key_value==0)
     goto out;
 
-  if (copy_to_user(buf,key_value,1))
+  if (copy_to_user(buf,&pkt->key_value,1))
     {
       ret=-EFAULT;
       goto out;
@@ -226,6 +307,7 @@ static int button_init(void)
 {
   unsigned short i;
   int result;
+  unsigned int addr=0,reg_value=0;
   dev_t dev_num;//device number
 
   if (button_major)
@@ -281,14 +363,29 @@ static int button_init(void)
   //I remeber,interrupt request should init in the open function,for interrupt resouce is in short
  
   //GPIO Setting
+  //GPECON
+  addr=(unsigned int)ioremap(0x56000040,4);
+  reg_value=ioread32((unsigned int *)addr);
+  reg_value=(reg_value&0xfffff33)|0x0;
+  iowrite32(reg_value,(unsigned int *)addr);
+  //GPFCON
+  addr=(unsigned int)ioremap(0x56000050,4);
+  reg_value=ioread32((unsigned int *)addr);
+  reg_value=(reg_value&0xffffffcc)|0x22;
+  iowrite32(reg_value,(unsigned int *)addr);
+  //GPGCON
+  addr=(unsigned int)ioremap(0x56000060,4);
+  reg_value=ioread32((unsigned int *)addr);
+  reg_value=(reg_value&0xff3f3f0f)|0x002f0f80;
+  iowrite32(reg_value,(unsigned int *)addr);
 
   //GPIO configure PIN function
 
   //ioremap memory for button check
-  pkeybutton->gpio_mem[0]=(long)ioremap(0x56000014,4);
-  pkeybutton->gpio_mem[1]=(long)ioremap(0x56000014,4);
-  pkeybutton->gpio_mem[2]=(long)ioremap(0x56000014,4);
-  pkeybutton->gpio_mem[3]=(long)ioremap(0x56000014,4);
+  pkeybutton->gpio_mem[0]=(unsigned int)ioremap(0x56000044,4);
+  pkeybutton->gpio_mem[1]=(unsigned int)ioremap(0x56000064,4);
+  pkeybutton->gpio_mem[2]=(unsigned int)ioremap(0x56000044,4);
+  pkeybutton->gpio_mem[3]=(unsigned int)ioremap(0x56000064,4);
   
 
 fail:

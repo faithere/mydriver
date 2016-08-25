@@ -1,5 +1,5 @@
 ifneq ($(KERNELRELEASE),)
-        obj-m :=buttons.o
+        obj-m :=button.o
 else
         KERNELDIR ?= /home/wzl/linux-2.6.25
         PWD := $(shell pwd)
