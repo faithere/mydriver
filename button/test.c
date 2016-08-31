@@ -1,16 +1,3 @@
-/*
- * File Name: test.c
- *
- * Descriptions: 
- *		The test code of buttons module driver.
- *
- * Author: 
- *		Mike Lee
- * Kernel Version: 2.6.20
- *
- * Update:
- * 		-	2007.07.23	Mike Lee	 Creat this file
- */
 #include <sys/stat.h>
 #include <fcntl.h>
 #include <stdio.h>
@@ -23,7 +10,7 @@ main()
    int fileno;
    int number;
 
-   fileno = open("/dev/buttons",O_RDWR);
+   fileno = open("/dev/keybutton",O_RDWR);
 
    if (fileno == -1)
    {
