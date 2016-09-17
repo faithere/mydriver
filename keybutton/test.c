@@ -20,7 +20,12 @@ main()
    while(1) 
    {
    	read(fileno,&number,1);
-   	printf("key=0x%x\n",number);
+   	printf("K%d\n",number);
+	if (number==14)
+	  {
+	    printf("Exit-Key-Scan!Bye~\n");
+	    break;
+	  }
    }
 
    close(fileno);
